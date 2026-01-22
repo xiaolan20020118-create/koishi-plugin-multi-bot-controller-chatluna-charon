@@ -1,0 +1,22 @@
+{
+  "name": "koishi-plugin-multi-bot-controller-chatluna-charon",
+  "description": "\u0016\u0016\u0016The ancient Greek god in charge of multi-bot message adaption for Chatluna",
+  "version": "0.0.1",
+  "main": "lib/index.js",
+  "typings": "lib/index.d.ts",
+  "files": [
+    "lib",
+    "dist"
+  ],
+  "license": "MIT",
+  "scripts": {},
+  "keywords": [
+    "chatbot",
+    "koishi",
+    "plugin"
+  ],
+  "devDependencies": {},
+  "peerDependencies": {
+    "koishi": "^4.18.7"
+  }
+}
