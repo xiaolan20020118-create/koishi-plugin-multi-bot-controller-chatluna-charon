@@ -1,5 +1,4 @@
 // src/interceptors/chain.ts
-import { randomUUID } from 'crypto'
 import { Context } from 'koishi'
 import { BotManager } from '../bot-manager'
 import { BotPersonaConfig } from '../types'
@@ -99,8 +98,17 @@ export class ChainInterceptor {
           return ChainMiddlewareRunStatus.CONTINUE
         }
 
+        // 如果既没有配置 preset 也没有配置 model，跳过拦截
+        // 让 ChatLuna 使用默认行为处理
+        if (!botConfig.preset && !botConfig.model) {
+          return ChainMiddlewareRunStatus.CONTINUE
+        }
+
         // 解析预设名称（处理带来源前缀的情况）
-        const { name: presetName, source } = this.botManager.parsePresetName(botConfig.preset)
+        // 只有当 preset 不为空时才解析，避免空字符串被误解析为有效 preset
+        const { name: presetName, source } = botConfig.preset
+          ? this.botManager.parsePresetName(botConfig.preset)
+          : { name: '', source: undefined }
 
         // 对于 character 预设，不继续执行 ChatLuna 的 chain
         // character 插件有自己的消息处理系统，会独立处理这些消息
@@ -176,8 +184,9 @@ export class ChainInterceptor {
         const room = context.options.room
         const botId = charonBotConfig.botId
 
-        // 检查 room 是否属于当前 bot（通过 roomName 判断）
-        const isRoomForBot = room.roomName?.includes(`(${botId})`)
+        // 检查 room 是否属于当前 bot（通过 conversationId 判断，比 roomName 更可靠）
+        // conversationId 格式为 bot_{botId}_{uuid}，由 Charon 完全控制
+        const isRoomForBot = room.conversationId?.startsWith(`bot_${botId}_`)
         if (!isRoomForBot) {
           // 需要创建或切换到正确的 bot room
           const botConfig = this.botManager.getBotConfig(botId)
@@ -190,24 +199,39 @@ export class ChainInterceptor {
               }
             }
           }
+          // 切换后继续执行修复逻辑，不要 return
+          // 更新 room 引用，使后续修复逻辑使用切换后的 room
+        }
+
+        // 重新获取 room（可能已被切换）
+        const currentRoom = context.options.room
+        if (!currentRoom) {
           return ChainMiddlewareRunStatus.CONTINUE
         }
 
         // 修复 autoUpdate 导致的配置被覆盖问题
+        this.logger.info(
+          `[Charon] 修复检查: charonBotConfig.preset="${charonBotConfig.preset}", currentRoom.preset="${currentRoom.preset}" | ` +
+          `charonBotConfig.model="${charonBotConfig.model}", currentRoom.model="${currentRoom.model}"`
+        )
         let needsFix = false
-        const fixedRoom = { ...room }
+        const fixedRoom = { ...currentRoom }
 
-        if (room.preset !== charonBotConfig.preset) {
+        // 只有当 Charon 配置了具体预设时才覆盖 currentRoom.preset
+        // 空字符串表示使用 ChatLuna 默认行为，不应覆盖
+        if (charonBotConfig.preset && currentRoom.preset !== charonBotConfig.preset) {
           fixedRoom.preset = charonBotConfig.preset
           needsFix = true
         }
 
-        if (room.model !== charonBotConfig.model) {
+        // 只有当 Charon 配置了具体模型时才覆盖 currentRoom.model
+        // 空字符串表示使用 ChatLuna 默认行为，不应覆盖
+        if (charonBotConfig.model && currentRoom.model !== charonBotConfig.model) {
           fixedRoom.model = charonBotConfig.model
           needsFix = true
         }
 
-        if (room.chatMode !== charonBotConfig.chatMode) {
+        if (currentRoom.chatMode !== charonBotConfig.chatMode) {
           fixedRoom.chatMode = charonBotConfig.chatMode
           needsFix = true
         }
@@ -240,7 +264,7 @@ export class ChainInterceptor {
    * 查找 bot 特定的 room
    */
   private async findBotSpecificRoom(
-    session: any,
+    _session: any,
     roomName: string,
     botId: string
   ): Promise<any> {
@@ -339,78 +363,36 @@ export class ChainInterceptor {
     const isDirect = !guildId
     const username = session.username || session.userId
 
-    // 获取当前最大的 roomId
-    const allRooms = await this.ctx.database.get('chathub_room', {})
-    const maxRoomId = allRooms.reduce((max, room) => Math.max(max, room.roomId), 0)
-
-    const newRoomId = maxRoomId + 1
-
-    // 生成 bot 特定的 conversationId（包含 botId 以隔离上下文）
-    // 格式: bot_{platform}:{selfId}_{uuid}，确保每个 bot 有独立的上下文
-    const conversationId = `bot_${botId}_${randomUUID()}`
-
-    // 验证 conversationId 格式（用于调试）
-    if (!conversationId.startsWith('bot_')) {
-      this.logger.warn(`[Charon前置] conversationId 格式异常: ${conversationId}`)
-    } else {
-      this.debug(`[Charon前置] conversationId 格式正确: ${conversationId}`)
-    }
-
-    // 解析预设名称（不带前缀），ChatLuna 的 preset.getPreset() 期望的是不带前缀的预设名
+    // 解析预设名称
     const { name: presetName } = this.botManager.parsePresetName(botConfig.preset)
 
-    // 创建 room
-    // 注意：ChatLuna 的 chathub_room 表没有 botId 字段
-    // 我们通过在 roomName 中包含 botId 来标识 bot 特定的 room
-    const newRoom: any = {
-      roomId: newRoomId,
-      roomName: isDirect
-        ? `${username} (${botId})`
-        : `${session.event?.guild?.name || username} (${botId})`,
+    // 构建 roomName
+    const roomName = isDirect
+      ? `${username} (${botId})`
+      : `${session.event?.guild?.name || username} (${botId})`
+
+    // 使用 BotManager 的通用方法创建 room
+    this.logger.info(`[Charon] 创建 room 配置: botId=${botId}, preset="${botConfig.preset}", model="${botConfig.model}"`)
+    const newRoom = await this.botManager.createRoom({
+      botId,
+      roomName,
       roomMasterId: userId,
-      conversationId: conversationId,
-      preset: presetName,  // 使用不带前缀的预设名
+      guildId,
+      visibility: isDirect ? 'private' : 'template_clone',
+      preset: botConfig.preset,
       model: botConfig.model,
       chatMode: botConfig.chatMode || 'chat',
-      visibility: isDirect ? 'private' : 'template_clone',
-      password: '',
-      autoUpdate: false,  // 关键：禁止 ChatLuna 自动更新配置
-      updatedTime: new Date(),
-    }
-
-    if (this.config.verboseLogging) {
-      this.logger.debug(`[Charon] 创建 room: ${newRoom.roomName}, conversationId: ${conversationId}`)
-    }
-
-    await this.ctx.database.create('chathub_room', newRoom)
-
-    // 创建 room 成员记录
-    await this.ctx.database.create('chathub_room_member', {
-      userId,
-      roomId: newRoomId,
-      roomPermission: 'owner',
     })
+    this.logger.info(`[Charon] room 已创建: roomId=${newRoom.roomId}, room.model="${newRoom.model}", room.preset="${newRoom.preset}"`)
 
-    // 如果是群聊，创建群组关联
-    if (!isDirect) {
-      await this.ctx.database.create('chathub_room_group_member', {
-        groupId: guildId,
-        roomId: newRoomId,
-        roomVisibility: newRoom.visibility,
-      })
-    }
-
-    // 创建用户默认 room 记录
-    // 注意：多个 bot 可能为同一用户在同一群组中创建 room
-    // 如果 chathub_user 记录已存在，我们跳过创建，让 ChatLuna 自己处理
+    // 创建用户默认 room 记录（chain.ts 特有逻辑）
     try {
       await this.ctx.database.create('chathub_user', {
         userId,
         groupId: isDirect ? '0' : guildId,
-        defaultRoomId: newRoomId,
+        defaultRoomId: newRoom.roomId,
       })
     } catch (error) {
-      // 忽略 UNIQUE constraint 错误，记录日志
       if (error instanceof Error && error.message.includes('UNIQUE constraint')) {
         this.logger.debug(`[Charon前置] chathub_user 记录已存在，跳过创建`)
       } else {
@@ -431,7 +413,7 @@ export class ChainInterceptor {
    */
   private async configureCharacterPlugin(
     session: any,
-    botId: string,
+    _botId: string,
     presetName: string
   ): Promise<void> {
     const characterPlugin = this.ctx.chatluna_character

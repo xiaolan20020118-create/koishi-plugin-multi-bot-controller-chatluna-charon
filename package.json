@@ -1,7 +1,7 @@
 {
   "name": "koishi-plugin-multi-bot-controller-chatluna-charon",
-  "description": "Multi-bot persona management plugin for Koishi ChatLuna, enabling different bots to use different presets and models with isolated conversation history.",
-  "version": "0.1.0",
+  "description": "Charon, the ancient Greek god of the River Styx, is configured to assign each Bot an independent ChatLuna persona (with unique presets and models), achieving persona isolation across multiple Bots.",
+  "version": "0.1.1",
   "main": "lib/index.js",
   "typings": "lib/index.d.ts",
   "files": [
@@ -18,25 +18,25 @@
     "persona"
   ],
   "peerDependencies": {
+    "@koishijs/plugin-server": "^3.0.0",
     "koishi": "^4.18.7",
-    "koishi-plugin-chatluna": "^4.0.0",
-    "koishi-plugin-multi-bot-controller": "^1.0.3",
-    "@koishijs/plugin-server": "^4.0.0"
+    "koishi-plugin-chatluna": "^1.3.0",
+    "koishi-plugin-multi-bot-controller": "^1.0.3"
   },
   "peerDependenciesMeta": {
-    "koishi-plugin-chatluna-character": {
+    "@koishijs/plugin-server": {
+      "optional": true
+    },
+    "@kotoko76/koishi-plugin-chatluna-character": {
       "optional": true
     },
     "koishi-plugin-chatluna-long-memory": {
-      "optional": true
-    },
-    "@koishijs/plugin-server": {
       "optional": true
     }
   },
   "koishi": {
     "description": {
-      "zh": "为 Koishi ChatLuna 提供多 Bot 人设管理功能，让不同的 Bot 可以使用不同的预设和模型，并隔离对话历史。"
+      "zh": "古希腊掌管冥河渡河的神，用于为每个 Bot 配置独立的 ChatLuna 人设（预设和模型），实现多 Bot 不同人设的隔离。"
     },
     "service": {
       "required": [

@@ -8,6 +8,17 @@ interface BotConfig {
 
 // Koishi 类型扩展
 declare module 'koishi' {
+  // ChatLuna PlatformService 接口（简化版）
+  interface ChatLunaPlatformService {
+    listAllModels(type: number): {
+      value: Array<{
+        name: string
+        platform: string
+        toModelName(): string
+      }>
+    }
+  }
+
   interface Context {
     // ChatLuna 服务
     chatluna?: {
@@ -17,10 +28,10 @@ declare module 'koishi' {
         getAllPreset(concatKeyword?: boolean): any
         getDefaultPreset(): any
       }
-      platform?: any
+      platform?: ChatLunaPlatformService
     }
 
-    // character 插件服务（包含 botConfig）
+    // character 插件服务（@kotoko76/koishi-plugin-chatluna-character）
     chatluna_character?: {
       config: {
         configs?: Record<string, any>
@@ -37,6 +48,7 @@ declare module 'koishi' {
         clearBotConfig(botId: string): void
         getAllConfigs(): Record<string, BotConfig>
       }
+      clear(groupId?: string): Promise<void>
     }
 
     // long-memory

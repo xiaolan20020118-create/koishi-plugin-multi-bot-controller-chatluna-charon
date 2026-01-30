@@ -1,14 +1,8 @@
 // src/bot-manager.ts
 import { Context } from 'koishi'
-import { BotPersonaConfig, BotStatus, PresetWithSource, PresetSource, ModelInfo } from './types'
-import { updatePresetOptions, updateModelOptions } from './config'
-
-/** 从 multi-bot-controller 同步的 Bot 配置 */
-interface MbcBotConfig {
-  platform: string
-  selfId: string
-  enabled: boolean
-}
+import { randomUUID } from 'crypto'
+import { BotPersonaConfig, BotStatus, PresetWithSource, PresetSource } from './types'
+import { updatePresetOptions } from './config'
 
 /**
  * Bot 管理器
@@ -18,7 +12,6 @@ export class BotManager {
   private readonly logger: ReturnType<Context['logger']>
   private readonly botStatusMap: Map<string, BotStatus> = new Map()
   private readonly presetCache: Map<string, PresetWithSource[]> = new Map()
-  private readonly modelCache: Map<string, ModelInfo[]> = new Map()
 
   constructor(
     private ctx: Context,
@@ -26,8 +19,6 @@ export class BotManager {
     private options: {
       debug: boolean
       verboseLogging: boolean
-      defaultPreset?: string
-      defaultModel?: string
     }
   ) {
     this.logger = ctx.logger('charon')
@@ -39,6 +30,14 @@ export class BotManager {
   parseBotId(botId: string): { platform: string; selfId: string } {
     const [platform, selfId] = botId.split(':', 2)
     return { platform, selfId }
+  }
+
+  /**
+   * 生成 bot 特定的 conversationId
+   * 格式: bot_{platform}:{selfId}_{uuid}，确保每个 bot 有独立的上下文
+   */
+  generateConversationId(botId: string): string {
+    return `bot_${botId}_${randomUUID()}`
   }
 
   /**
@@ -119,73 +118,12 @@ export class BotManager {
   }
 
   /**
-   * 从 multi-bot-controller 同步 bot 配置
-   */
-  syncFromMBC(mbcBots: MbcBotConfig[]): {
-    added: BotPersonaConfig[]
-    updated: BotPersonaConfig[]
-    removed: BotPersonaConfig[]
-  } {
-    const result = {
-      added: [] as BotPersonaConfig[],
-      updated: [] as BotPersonaConfig[],
-      removed: [] as BotPersonaConfig[],
-    }
-
-    // 检查新增或更新的 bot
-    for (const mbcBot of mbcBots) {
-      const botId = this.getBotId(mbcBot.platform, mbcBot.selfId)
-      const existing = this.getBotConfig(botId)
-
-      if (!existing) {
-        // 新增 bot，使用空配置（用户需手动选择预设和模型）
-        const newBot: BotPersonaConfig = {
-          botId,
-          enabled: mbcBot.enabled,
-          preset: '',
-          model: '',
-          chatMode: 'chat',
-        }
-        this.config.push(newBot)
-        result.added.push(newBot)
-        this.logger.info(`从 MBC 添加新 Bot: ${botId}（请手动配置预设和模型）`)
-      } else {
-        // 更新启用状态
-        if (existing.enabled !== mbcBot.enabled) {
-          existing.enabled = mbcBot.enabled
-          result.updated.push(existing)
-          this.logger.info(
-            `Bot ${botId} 状态已变更: ${mbcBot.enabled ? '启用' : '禁用'}`
-          )
-        }
-      }
-    }
-
-    // 检查移除的 bot
-    for (let i = this.config.length - 1; i >= 0; i--) {
-      const bot = this.config[i]
-      const { platform, selfId } = this.parseBotId(bot.botId)
-      const existsInMBC = mbcBots.some(
-        mbc => mbc.platform === platform && mbc.selfId === selfId
-      )
-
-      if (!existsInMBC) {
-        this.config.splice(i, 1)
-        result.removed.push(bot)
-        this.botStatusMap.delete(bot.botId)
-        this.logger.info(`从 MBC 移除 Bot: ${bot.botId}`)
-      }
-    }
-
-    return result
-  }
-
-  /**
    * 加载可用的预设列表
    * 自动检测 ChatLuna 和 character 插件，从所有启用的来源加载预设
    * @param silent 是否静默加载（不输出日志）
+   * @param force 是否强制更新（跳过缓存检查）
    */
-  async loadPresets(silent = false): Promise<void> {
+  async loadPresets(silent = false, force = false): Promise<void> {
     const presets: PresetWithSource[] = []
 
     // 1. 从 ChatLuna 加载预设
@@ -194,14 +132,16 @@ export class BotManager {
     // 2. 从 character 加载预设（如果插件已启用）
     await this.loadCharacterPresets(presets)
 
-    // 检查是否有变化
-    const oldPresets = this.presetCache.get('all') || []
-    const oldKeys = oldPresets.map(p => p.name).sort().join(',')
-    const newKeys = presets.map(p => p.name).sort().join(',')
+    // 检查是否有变化（force 模式下跳过检查）
+    if (!force) {
+      const oldPresets = this.presetCache.get('all') || []
+      const oldKeys = oldPresets.map(p => p.name).sort().join(',')
+      const newKeys = presets.map(p => p.name).sort().join(',')
 
-    if (oldKeys === newKeys) {
-      this.debug('预设列表无变化，跳过更新')
-      return
+      if (oldKeys === newKeys) {
+        this.debug('预设列表无变化，跳过更新')
+        return
+      }
     }
 
     // 缓存结果
@@ -357,93 +297,10 @@ export class BotManager {
   }
 
   /**
-   * 加载可用的模型列表
-   * @param silent 是否静默加载（不输出日志）
-   */
-  async loadModels(silent = false): Promise<void> {
-    try {
-      const chatlunaService = this.ctx.chatluna
-      if (!chatlunaService) {
-        this.logger.warn('ChatLuna 服务不可用')
-        return
-      }
-
-      // 获取所有已注册的平台的模型
-      const platforms = (chatlunaService as any).platform
-      if (!platforms) {
-        this.logger.warn('ChatLuna 平台服务不可用')
-        return
-      }
-
-      const models: ModelInfo[] = []
-      for (const [platformName, platformClient] of Object.entries(platforms)) {
-        try {
-          const platformModels = await (platformClient as any)?.getModels?.()
-          if (platformModels) {
-            for (const model of platformModels) {
-              models.push({
-                name: `${platformName}/${model}`,
-                label: model,
-                platform: platformName,
-              })
-            }
-          }
-        } catch (e) {
-          // 忽略不支持 getModels 的平台
-        }
-      }
-
-      // 检查是否有变化
-      const oldModels = this.modelCache.get('all') || []
-      const oldKeys = oldModels.map(m => m.name).sort().join(',')
-      const newKeys = models.map(m => m.name).sort().join(',')
-
-      if (oldKeys === newKeys) {
-        this.debug('模型列表无变化，跳过更新')
-        return
-      }
-
-      this.modelCache.set('all', models)
-
-      // 更新配置界面的模型选项
-      updateModelOptions(this.ctx, models)
-
-      if (!silent) {
-        this.logger.info(`已加载 ${models.length} 个模型`)
-      }
-    } catch (error) {
-      this.logger.error('加载模型失败:', error)
-    }
-  }
-
-  /**
    * 获取可用预设列表
    */
   getPresets(): PresetWithSource[] {
     return this.presetCache.get('all') || []
-  }
-
-  /**
-   * 获取可用模型列表
-   */
-  getModels(): ModelInfo[] {
-    return this.modelCache.get('all') || []
-  }
-
-  /**
-   * 验证预设是否存在
-   */
-  validatePreset(presetName: string): boolean {
-    const presets = this.getPresets()
-    return presets.some(p => p.name === presetName)
-  }
-
-  /**
-   * 验证模型是否存在
-   */
-  validateModel(modelName: string): boolean {
-    const models = this.getModels()
-    return models.some(m => m.name === modelName)
   }
 
   /**
@@ -473,5 +330,94 @@ export class BotManager {
     if (this.options.debug) {
       this.logger.debug(args)
     }
+  }
+
+  /**
+   * 创建 bot 特定的 room（通用方法）
+   * @param options room 创建选项
+   * @returns 创建的 room 对象
+   * @throws 数据库操作失败时抛出错误
+   */
+  async createRoom(options: {
+    botId: string
+    roomName: string
+    roomMasterId: string
+    guildId?: string
+    visibility: 'private' | 'template_clone' | 'public'
+    preset?: string
+    model?: string
+    chatMode?: 'chat' | 'plugin'
+  }): Promise<any> {
+    const { botId, roomName, roomMasterId, guildId, visibility, preset, model, chatMode } = options
+
+    // 获取当前最大的 roomId（优化：只查询一条记录，按 roomId 降序）
+    const result = await this.ctx.database.get('chathub_room', {}, { limit: 1, sort: { roomId: 'desc' } })
+    const maxRoomId = result[0]?.roomId ?? 0
+    const newRoomId = maxRoomId + 1
+
+    // 生成 conversationId
+    const conversationId = this.generateConversationId(botId)
+
+    // 解析预设名称
+    const { name: presetName } = preset ? this.parsePresetName(preset) : { name: '' }
+
+    // 创建 room
+    const newRoom: any = {
+      roomId: newRoomId,
+      roomName,
+      roomMasterId,
+      conversationId,
+      preset: presetName,
+      model: model || '',
+      chatMode: chatMode || 'chat',
+      visibility,
+      password: '',
+      autoUpdate: false,
+      updatedTime: new Date(),
+    }
+
+    try {
+      await this.ctx.database.create('chathub_room', newRoom)
+    } catch (error) {
+      this.logger.error(`[Charon] 创建 chathub_room 失败:`, error)
+      throw error
+    }
+
+    // 创建 room 成员记录
+    try {
+      await this.ctx.database.create('chathub_room_member', {
+        userId: roomMasterId,
+        roomId: newRoomId,
+        roomPermission: 'owner',
+      })
+    } catch (error) {
+      this.logger.error(`[Charon] 创建 chathub_room_member 失败:`, error)
+      throw error
+    }
+
+    // 如果是群聊且提供了 guildId，创建群组关联
+    if (guildId && visibility !== 'private') {
+      try {
+        await this.ctx.database.create('chathub_room_group_member', {
+          groupId: guildId,
+          roomId: newRoomId,
+          roomVisibility: visibility,
+        })
+      } catch (error) {
+        this.logger.error(`[Charon] 创建 chathub_room_group_member 失败:`, error)
+        throw error
+      }
+    }
+
+    return newRoom
+  }
+
+  /**
+   * 验证预设是否存在
+   * @deprecated 未使用，保留供未来扩展
+   */
+  validatePreset(presetName: string): boolean {
+    const presets = this.getPresets()
+    return presets.some(p => p.name === presetName)
   }
 }

@@ -1,6 +1,6 @@
 // src/config.ts
 import { Context, Schema } from 'koishi'
-import { PresetWithSource, ModelInfo, BotPersonaConfig } from './types'
+import { PresetWithSource, BotPersonaConfig } from './types'
 
 /** 插件配置 */
 export interface Config {
@@ -55,26 +55,6 @@ export function updatePresetOptions(ctx: Context, presets: PresetWithSource[]) {
 }
 
 /**
- * 更新模型选择选项
- * 此函数由 bot-manager.ts 在加载模型后调用
- */
-export function updateModelOptions(ctx: Context, models: ModelInfo[]) {
-  if (models.length === 0) {
-    ctx.schema.set('charon.model', Schema.union([
-      Schema.const('').description('请先在 ChatLuna 中配置模型'),
-    ]))
-    return
-  }
-
-  const options = [
-    Schema.const('').description('未选择'),
-    ...models.map(m => Schema.const(m.name).description(m.name))
-  ]
-
-  ctx.schema.set('charon.model', Schema.union(options))
-}
-
-/**
  * 创建单个 Bot 配置 Schema
  */
 const createBotConfigSchema = (): Schema<BotPersonaConfig> => {
@@ -91,8 +71,8 @@ const createBotConfigSchema = (): Schema<BotPersonaConfig> => {
 
     // ChatLuna 配置
     Schema.object({
-      model: Schema.dynamic('charon.model')
-        .description('**使用的模型**')
+      model: Schema.dynamic('model')
+        .description('**使用的模型**<br>从 ChatLuna 已配置的模型中选择')
         .default(''),
       preset: Schema.dynamic('charon.preset')
         .description('**使用的预设**<br>会自动加载 ChatLuna 和 character 的预设')
@@ -113,7 +93,6 @@ export const createConfig = (ctx: Context): Schema<Config> => {
   // 初始化默认 Schema
   updateBotIdOptions(ctx, [])
   updatePresetOptions(ctx, [])
-  updateModelOptions(ctx, [])
 
   return Schema.intersect([
     Schema.object({
@@ -151,7 +130,7 @@ export const Config: Schema<Config> = Schema.intersect([
         // ChatLuna 配置
         Schema.object({
           model: Schema.dynamic('model')
-            .description('**使用的模型**')
+            .description('**使用的模型**<br>从 ChatLuna 已配置的模型中选择')
             .default(''),
           preset: Schema.dynamic('charon.preset')
             .description('**使用的预设**<br>会自动加载 ChatLuna 和 character 的预设')

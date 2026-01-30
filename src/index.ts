@@ -30,26 +30,25 @@ export const usage = `
 
 ### 前置要求
 
-**重要：使用本插件前，请确保在 ChatLuna 配置中开启「自动为用户创建新 room」选项。**
+**使用本插件前，请确保在 ChatLuna 配置中开启「自动为用户创建新 room」选项。**
 
-本插件依赖独立的 Room 来实现多 Bot 人设隔离，如果未开启该选项，插件无法正常工作。
+**本插件无法与普通版的 character 插件配合使用，请使用私域插件 @kotoko76/koishi-plugin-chatluna-character **
 
-### Room 命名规则
+### Room 创建规则
 
-- 每个 Bot 自动创建独立的 Template Room
+- 每个 Bot 自动创建独立的 Room
 - Room 名称格式: 模板房间_{platform}:{selfId}
-- ConversationId 格式: bot_{platform}:{selfId}_{timestamp}_{random}
+- ConversationId 格式: bot_{platform}:{selfId}_{uuid}
 
 ### 配置说明
 
-1. Bot ID 格式: platform:selfId（如 onebot:123456）
+1. Bot ID:
+   - 从 multi-bot-controller 已配置的 bot 中选择
 2. 预设选择:
-   - 自动从 ChatLuna 和 character（已启用时）加载预设
-   - 预设名称标注来源，如 \`预设名 (ChatLuna)\` 或 \`预设名 (character)\`
-3. 模型选择: 从 ChatLuna 已配置的模型中选择
-4. 模式选择:
-   - chat: 聊天模式
-   - agent: 插件模式
+   - 从 ChatLuna 和 character（启用时）已配置的预设中选择
+3. 模型选择:
+   - 从 ChatLuna 已配置的模型中选择
+
 
 ---
 
@@ -68,54 +67,43 @@ export function apply(ctx: Context, config: Config): void {
   // 动态 Schema 更新服务
   // 从 multi-bot-controller 获取已配置的 bot 列表
   // ========================================
-  class BotSchemaService {
-    private knownBots: Set<string> = new Set()
-    private debounceTimer: NodeJS.Timeout | null = null
+  function setupBotSchemaService() {
+    const knownBots: Set<string> = new Set()
+    let debounceTimer: NodeJS.Timeout | null = null
 
-    constructor(private ctx: Context, private logger: ReturnType<Context['logger']>) {
-      // 立即扫描一次
-      const scanTimer = setTimeout(() => this.scanFromMBC(), 500)
-      manualDisposes.push(() => clearTimeout(scanTimer))
-
-      // 监听 MBC 的 bot 配置更新事件
-      // Koishi 会自动清理这些事件监听器
-      this.ctx.on('multi-bot-controller/bots-updated', () => this.scheduleScan())
-
-      // 作为备选，监听 bot 变化
-      this.ctx.on('bot-added', () => this.scheduleScan())
-      this.ctx.on('bot-removed', () => this.scheduleScan())
-      this.ctx.on('ready', () => this.scheduleScan())
+    const scheduleScan = () => {
+      if (debounceTimer) clearTimeout(debounceTimer)
+      debounceTimer = setTimeout(() => scanFromMBC(), 200)
     }
 
-    private scheduleScan() {
-      if (this.debounceTimer) clearTimeout(this.debounceTimer)
-      this.debounceTimer = setTimeout(() => this.scanFromMBC(), 200)
-    }
-
-    private scanFromMBC() {
+    const scanFromMBC = () => {
       try {
-        // 从 MBC 服务获取 bot 列表
-        const bots = this.ctx['multi-bot-controller'].getBots()
-        // 过滤出已启用的 bot
-        const enabledBots = bots.filter(b => b.enabled)
-        const botIds = enabledBots.map(b => `${b.platform}:${b.selfId}`).sort()
-
-        // 检查是否有变化
-        const currentSet = new Set(botIds)
-        if (this.setsEqual(this.knownBots, currentSet)) {
+        const mbcService = ctx['multi-bot-controller']
+        if (!mbcService) {
+          logger.warn('multi-bot-controller 服务不可用')
           return
         }
 
-        this.knownBots = currentSet
-        this.updateBotSchema(botIds)
+        const bots = mbcService.getBots()
+        const enabledBots = bots.filter((b: any) => b.enabled)
+        const botIds = enabledBots.map((b: any) => `${b.platform}:${b.selfId}`).sort()
 
-        this.logger.info(`Bot 列表已更新，共 ${botIds.length} 个可用`)
+        const currentSet = new Set(botIds)
+        if (setsEqual(knownBots, currentSet)) {
+          return
+        }
+
+        // 更新 knownBots
+        knownBots.clear()
+        botIds.forEach((id: string) => knownBots.add(id))
+        updateBotIdOptions(ctx, botIds)
+        logger.info(`Bot 列表已更新，共 ${botIds.length} 个可用`)
       } catch (error) {
-        this.logger.warn('从 multi-bot-controller 获取 Bot 列表失败:', error)
+        logger.warn('从 multi-bot-controller 获取 Bot 列表失败:', error)
       }
     }
 
-    private setsEqual(a: Set<string>, b: Set<string>): boolean {
+    const setsEqual = (a: Set<string>, b: Set<string>): boolean => {
       if (a.size !== b.size) return false
       for (const item of a) {
         if (!b.has(item)) return false
@@ -123,15 +111,19 @@ export function apply(ctx: Context, config: Config): void {
       return true
     }
 
-    private updateBotSchema(botIds: string[]) {
-      // 使用 ctx.schema.set 动态更新 Schema
-      updateBotIdOptions(this.ctx, botIds)
-      this.logger.info(`Bot 选择列表已更新，共 ${botIds.length} 个选项`)
-    }
+    // 立即扫描一次
+    const scanTimer = setTimeout(() => scanFromMBC(), 500)
+    manualDisposes.push(() => clearTimeout(scanTimer))
+
+    // 监听事件
+    ctx.on('multi-bot-controller/bots-updated', () => scheduleScan())
+    ctx.on('bot-added', () => scheduleScan())
+    ctx.on('bot-removed', () => scheduleScan())
+    ctx.on('ready', () => scheduleScan())
   }
 
   // 启动 Schema 服务
-  const botSchemaService = new BotSchemaService(ctx, logger)
+  setupBotSchemaService()
 
   // 初始化 BotManager，使用配置中的 bots 列表
   const botManager = new BotManager(
@@ -146,10 +138,10 @@ export function apply(ctx: Context, config: Config): void {
   // 预设加载防抖：避免短时间内重复加载
   let presetLoadTimer: NodeJS.Timeout | null = null
 
-  const schedulePresetLoad = () => {
+  const schedulePresetLoad = (force = false) => {
     if (presetLoadTimer) clearTimeout(presetLoadTimer)
     presetLoadTimer = setTimeout(async () => {
-      await botManager.loadPresets()
+      await botManager.loadPresets(false, force)
       presetLoadTimer = null
     }, 1000)
   }
@@ -190,40 +182,83 @@ export function apply(ctx: Context, config: Config): void {
 
   /**
    * 设置 character 插件就绪监听器
-   * 使用事件驱动替代轮询，支持各种加载顺序和重载场景：
+   * 使用事件驱动 + 延迟轮询兜底，支持各种加载顺序和重载场景：
    * - charon 在 character 之前加载：监听 ready 事件后注册
    * - charon 在 character 之后加载：立即尝试注册
    * - charon 重载：监听器重新注册，等待下次 ready 事件
    * - character 重载：触发 ready 事件，重新注册配置
+   * - ready 事件已错过：延迟轮询兜底检测
    */
   function setupCharacterPluginListener() {
+    const attemptRegistration = (source: string): boolean => {
+      if (tryRegisterBotConfigs()) {
+        logger.info(`[Charon] Bot 配置已注册到 character 插件 (${source})`)
+        return true
+      }
+      return false
+    }
+
     // 立即尝试一次（处理 character 已就绪的情况）
-    if (tryRegisterBotConfigs()) {
-      logger.info('[Charon] Bot 配置已注册到 character 插件')
+    if (attemptRegistration('immediate')) {
+      return
     }
 
     // 监听 character 插件就绪事件（处理 character 尚未就绪或重载的情况）
     // Koishi 会在插件 unload 时自动清理通过 ctx.on 注册的监听器
-    ctx.on('chatluna_character/ready', () => {
-      if (tryRegisterBotConfigs()) {
-        logger.info('[Charon] Bot 配置已注册到 character 插件')
+    const readyHandler = () => {
+      if (attemptRegistration('ready-event')) {
+        // 注册成功后停止轮询
+        clearInterval(checkTimer)
       }
-    })
+    }
+    ctx.on('chatluna_character/ready', readyHandler)
+
+    // 兜底：延迟轮询检测（处理 ready 事件在监听器注册前已触发的情况）
+    let checkCount = 0
+    const maxChecks = 20 // 最多检查 20 次（10秒）
+    const checkTimer = setInterval(() => {
+      checkCount++
+      if (attemptRegistration(`poll-${checkCount}`) || checkCount >= maxChecks) {
+        clearInterval(checkTimer)
+      }
+    }, 500)
+
+    // 清理定时器（如果插件提前卸载）
+    manualDisposes.push(() => clearInterval(checkTimer))
   }
 
   // 立即开始尝试注册配置（在 character 插件初始化时）
   setupCharacterPluginListener()
 
-  // 加载预设和模型列表
-  // Koishi 会自动清理这些事件监听器
+  // ChatLuna 就绪时加载预设（模型列表通过 watch 自动响应式更新）
   ctx.on('chatluna/ready', async () => {
-    await botManager.loadModels()
     schedulePresetLoad()
   })
 
+  // 兜底：检测 chatluna 是否已就绪（处理插件重载场景）
+  const checkChatlunaReady = async () => {
+    if (ctx.chatluna) {
+      schedulePresetLoad()
+      clearInterval(chatlunaCheckTimer)
+    }
+  }
+
+  let checkCount = 0
+  const maxChecks = 20
+  const chatlunaCheckTimer = setInterval(() => {
+    checkCount++
+    if (checkCount >= maxChecks) {
+      clearInterval(chatlunaCheckTimer)
+    }
+    checkChatlunaReady()
+  }, 500)
+
+  manualDisposes.push(() => clearInterval(chatlunaCheckTimer))
+
   // character 可能在 chatluna 之后才就绪，监听其就绪事件
+  // 强制刷新预设列表，确保 character 预设能被加载
   ctx.on('chatluna_character/ready', async () => {
-    schedulePresetLoad()
+    schedulePresetLoad(true)  // force = true
   })
 
   // 监听 ChatLuna 预设配置变更（通过 service 配置更新事件）
@@ -280,6 +315,11 @@ export function apply(ctx: Context, config: Config): void {
   registerDebugCommands(ctx, botManager, logger, tryRegisterBotConfigs)
 
   // ========================================
+  // 指令拦截：与 character 插件深度融合
+  // ========================================
+  setupCharacterCommandInterceptor(ctx, botManager, logger)
+
+  // ========================================
   // 插件停用时清理
   // ========================================
   ctx.on('dispose', async () => {
@@ -334,7 +374,6 @@ function registerConsoleExtensions(ctx: Context, botManager: BotManager, logger:
       return {
         bots: botManager.getBotsConfig(),
         presets: botManager.getPresets(),
-        models: botManager.getModels(),
       }
     })
 
@@ -380,14 +419,13 @@ function registerDebugCommands(
       return output.trim()
     })
 
-  // 手动重新加载预设和模型
-  ctx.command('charon.reload', '重新加载预设和模型列表', { authority: 4 })
+  // 手动重新加载预设
+  ctx.command('charon.reload', '重新加载预设列表', { authority: 4 })
     .action(async () => {
       await botManager.loadPresets()
-      await botManager.loadModels()
       // 重新注册到 character 插件
       registerBotConfigsToCharacter()
-      return '预设和模型列表已重新加载'
+      return '预设列表已重新加载'
     })
 
   // 测试 Bot 配置是否正确注册到 character
@@ -411,4 +449,113 @@ function registerDebugCommands(
 
       return output.trim()
     })
+}
+
+/**
+ * 设置 character 插件指令拦截器
+ *
+ * 功能：
+ * - 直接处理 clear 指令，使用 session.send() 发送响应
+ * - 如果艾特了特定 bot，清除该 bot 的记录
+ * - 如果未艾特任何 bot，清除该群组所有 bot 的记录
+ */
+function setupCharacterCommandInterceptor(
+  ctx: Context,
+  botManager: BotManager,
+  logger: any
+): void {
+  // 尝试从 character 插件获取 groupInfos
+  // 注意：这是延迟获取，因为 character 插件可能尚未加载
+  const getGroupInfos = (): Record<string, any> | null => {
+    // 尝试通过 require 动态导入
+    try {
+      const characterFilterPath = require.resolve(
+        '@kotoko76/koishi-plugin-chatluna-character/plugins/filter'
+      )
+      const module = require(characterFilterPath)
+      return module.groupInfos || null
+    } catch {
+      return null
+    }
+  }
+
+  ctx.middleware(async (session, next) => {
+    // 只处理群聊消息
+    if (!session.guildId) return next()
+
+    // 检查是否是 character clear 指令
+    const content = session.content?.trim() ?? ''
+    if (
+      !content.startsWith('chatluna.character.clear') &&
+      !content.startsWith('.chatluna.character.clear')
+    ) {
+      return next()
+    }
+
+    // 解析指令和参数（忽略原参数，统一使用艾特检测）
+    const match = content.match(/^\.?chatluna\.character\.clear(?:\s+(.*))?$/i)
+    if (!match) return next()
+
+    const groupId = session.guildId
+
+    // 检测消息中的艾特
+    const mentionedBots: string[] = []
+    if (session.elements) {
+      for (const element of session.elements) {
+        if (element.type === 'at' && element.attrs?.id) {
+          const atId = element.attrs.id
+          const botConfig = botManager.getConfig().find(c => c.botId === atId)
+          if (botConfig) {
+            mentionedBots.push(atId)
+          }
+        }
+      }
+    }
+
+    // 获取 groupInfos
+    const infos = getGroupInfos()
+
+    if (mentionedBots.length > 0) {
+      // 艾特了特定 bot，清除该 bot 的记录
+      const botId = mentionedBots[0]
+      const key = `${botId}_${groupId}`
+
+      if (infos && infos[key]) {
+        delete infos[key]
+      }
+
+      if (ctx.chatluna_character) {
+        await ctx.chatluna_character.clear(groupId)
+      }
+
+      logger.info(`[Charon] 清除 bot ${botId} 在群组 ${groupId} 的聊天记录`)
+      await session.send(`已清除 bot ${botId} 在群组 ${groupId} 的聊天记录`)
+    } else {
+      // 未艾特任何 bot，清除该群组所有 bot 的记录
+      let clearedCount = 0
+
+      if (infos) {
+        for (const key of Object.keys(infos)) {
+          if (key.endsWith(`_${groupId}`)) {
+            delete infos[key]
+            clearedCount++
+          }
+        }
+      }
+
+      if (ctx.chatluna_character) {
+        await ctx.chatluna_character.clear(groupId)
+      }
+
+      if (clearedCount === 0) {
+        await session.send(`未找到群组 ${groupId} 的聊天记录`)
+      } else {
+        logger.info(`[Charon] 清除群组 ${groupId} 的聊天记录（${clearedCount} 个 bot）`)
+        await session.send(`已清除群组 ${groupId} 的聊天记录（${clearedCount} 个 bot）`)
+      }
+    }
+
+    // 不继续传递到下一个中间件
+    return
+  })
 }
