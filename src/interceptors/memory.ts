@@ -21,7 +21,7 @@ export class MemoryInterceptor {
       debug: boolean
     }
   ) {
-    this.logger = ctx.logger('charon:memory')
+    this.logger = ctx.logger('chatluna-charon:memory')
   }
 
   /**

@@ -56,7 +56,7 @@ export const usage = `
 
 export function apply(ctx: Context, config: Config): void {
   // 创建 logger
-  const logger = ctx.logger('charon')
+  const logger = ctx.logger('chatluna-charon')
 
   logger.info('多 Bot 人设控制器插件正在启动...')
 

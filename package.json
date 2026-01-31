@@ -1,7 +1,7 @@
 {
   "name": "koishi-plugin-multi-bot-controller-chatluna-charon",
   "description": "Charon, the ancient Greek god of the River Styx, is configured to assign each Bot an independent ChatLuna persona (with unique presets and models), achieving persona isolation across multiple Bots.",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "main": "lib/index.js",
   "typings": "lib/index.d.ts",
   "files": [

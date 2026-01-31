@@ -35,7 +35,7 @@ export class ChainInterceptor {
       verboseLogging: boolean
     }
   ) {
-    this.logger = ctx.logger('charon:chain')
+    this.logger = ctx.logger('chatluna-charon:chain')
   }
 
   /**

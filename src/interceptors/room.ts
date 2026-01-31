@@ -21,7 +21,7 @@ export class RoomInterceptor {
       debug: boolean
     }
   ) {
-    this.logger = ctx.logger('charon:room')
+    this.logger = ctx.logger('chatluna-charon:room')
   }
 
   /**

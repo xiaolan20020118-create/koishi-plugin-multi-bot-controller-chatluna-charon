@@ -21,7 +21,7 @@ export class BotManager {
       verboseLogging: boolean
     }
   ) {
-    this.logger = ctx.logger('charon')
+    this.logger = ctx.logger('chatluna-charon')
   }
 
   /**

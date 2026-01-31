@@ -20,16 +20,20 @@ export interface Config {
  * 使用 ctx.schema.set 动态更新 Schema
  */
 export function updateBotIdOptions(ctx: Context, botIds: string[]) {
+  // 占位符始终放在最前面，作为默认选项
+  const placeholder = Schema.const('').description('无')
+
   if (botIds.length === 0) {
     ctx.schema.set('charon.botId', Schema.union([
-      Schema.const('').description('暂无可用 Bot（请先在 multi-bot-controller 中配置）'),
+      placeholder,
     ]))
     return
   }
 
-  const options = botIds.map(botId =>
-    Schema.const(botId).description(botId)
-  )
+  const options = [
+    placeholder,
+    ...botIds.map(botId => Schema.const(botId).description(botId))
+  ]
 
   ctx.schema.set('charon.botId', Schema.union(options))
 }
