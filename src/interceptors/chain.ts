@@ -26,6 +26,8 @@ export class ChainInterceptor {
   private middlewareDisposes: Array<() => void> = []
   // 保存中间件实例，用于手动移除
   private middlewares: any[] = []
+  // 防重复注册标志
+  private setupMiddlewareRegistered = false
 
   constructor(
     private ctx: Context,
@@ -50,17 +52,23 @@ export class ChainInterceptor {
       this.setupChainMiddleware()
     })
 
-    // 备用：如果 chatluna/ready 已经触发过，尝试立即注册
-    setTimeout(() => {
-      this.logger.info('[Charon] 备用检查：尝试立即注册中间件')
-      this.setupChainMiddleware()
-    }, 5000)
+    // 移除备用定时器，防止重复注册中间件
+    // setTimeout(() => {
+    //   this.logger.info('[Charon] 备用检查：尝试立即注册中间件')
+    //   this.setupChainMiddleware()
+    // }, 5000)
   }
 
   /**
    * 设置 Chain 中间件
    */
   private setupChainMiddleware(): void {
+    // 防重复注册检查
+    if (this.setupMiddlewareRegistered) {
+      this.logger.debug('[Charon] 中间件已注册，跳过重复注册')
+      return
+    }
+
     // ChatLuna 的 ChatChain 实例在 ctx.chatluna.chatChain
     const chatlunaService = this.ctx.chatluna as any
     const chain = chatlunaService?.chatChain as any
@@ -258,6 +266,9 @@ export class ChainInterceptor {
 
     // 调试：检查已注册的中间件
     this.logger.info(`[Charon] 当前已注册的中间件数量: ${(chain as any)._graph?._tasks?.size || '未知'}`)
+
+    // 标记已注册，防止重复注册
+    this.setupMiddlewareRegistered = true
   }
 
   /**
@@ -505,6 +516,7 @@ export class ChainInterceptor {
 
     this.middlewareDisposes = []
     this.middlewares = []
+    this.setupMiddlewareRegistered = false  // 重置防重复注册标志
 
     this.logger.info('[Charon] ChainInterceptor 已停止')
   }

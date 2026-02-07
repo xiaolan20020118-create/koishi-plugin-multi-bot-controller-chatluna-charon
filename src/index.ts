@@ -159,6 +159,11 @@ export function apply(ctx: Context, config: Config): void {
       return false
     }
 
+    // 检查 botConfig 属性是否存在（服务可能未完全初始化）
+    if (!ctx.chatluna_character.botConfig) {
+      return false
+    }
+
     for (const botConfig of botManager.getConfig()) {
       const botId = botConfig.botId
       const preset = botConfig.preset
