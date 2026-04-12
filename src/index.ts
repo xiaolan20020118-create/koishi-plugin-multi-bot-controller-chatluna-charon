@@ -88,7 +88,7 @@ export function apply(ctx: Context, config: Config): void {
         const enabledBots = bots.filter((b: any) => b.enabled)
         const botIds = enabledBots.map((b: any) => `${b.platform}:${b.selfId}`).sort()
 
-        const currentSet = new Set(botIds)
+        const currentSet: Set<string> = new Set(botIds)
         if (setsEqual(knownBots, currentSet)) {
           return
         }

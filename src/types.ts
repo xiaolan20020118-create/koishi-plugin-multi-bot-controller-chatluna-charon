@@ -6,6 +6,11 @@ interface BotConfig {
   model?: string
 }
 
+// multi-bot-controller 服务接口（本地最小声明，避免直接依赖外部包类型）
+interface MultiBotControllerServiceLike {
+  getBots(): MbcBotInfo[]
+}
+
 // Koishi 类型扩展
 declare module 'koishi' {
   // ChatLuna PlatformService 接口（简化版）
@@ -62,7 +67,7 @@ declare module 'koishi' {
     // console 已存在于 Context 中，需要用 as any 访问 assets 属性
 
     // multi-bot-controller 服务
-    'multi-bot-controller': import('koishi-plugin-multi-bot-controller').MultiBotControllerService
+    'multi-bot-controller': MultiBotControllerServiceLike
   }
 
   interface Tables {
